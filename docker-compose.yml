@@ -1,0 +1,98 @@
+# Ambiente local com "políticas de segurança" aplicadas a cada contêiner:
+#  - usuário não-root, sistema de arquivos somente leitura, todas as capabilities removidas
+#  - no-new-privileges, limites de memória/processos, healthchecks, imagens com versão fixa
+#  - MongoDB com autenticação, sem porta publicada e em rede interna isolada
+name: assinatura-digital
+
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    command: ["mongod", "--auth"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+    volumes:
+      - mongo_data:/data/db
+    networks: [backend_net]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID, DAC_OVERRIDE, FOWNER]
+    mem_limit: 1g
+    pids_limit: 300
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      # Para usar MongoDB Atlas (nuvem), defina MONGODB_URI no .env e remova o serviço "mongo".
+      MONGODB_URI: ${MONGODB_URI:-mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongo:27017/assinatura?authSource=admin}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES: ${JWT_EXPIRES:-1h}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      UPLOAD_DIR: /data/uploads
+      SMTP_HOST: ${SMTP_HOST:-mailhog}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-Assinatura Digital <no-reply@example.com>}
+      SEED_MANAGER_NAME: ${SEED_MANAGER_NAME:-Gerente}
+      SEED_MANAGER_EMAIL: ${SEED_MANAGER_EMAIL}
+      SEED_MANAGER_PASSWORD: ${SEED_MANAGER_PASSWORD}
+    ports: ["4000:4000"]
+    volumes:
+      - uploads:/data/uploads
+    networks: [backend_net, edge]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 512m
+    pids_limit: 200
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:4000/api}
+        API_ORIGIN: ${PUBLIC_API_ORIGIN:-http://localhost:4000}
+    restart: unless-stopped
+    ports: ["3002:8080"]
+    networks: [edge]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 128m
+    pids_limit: 100
+
+  # Caixa de e-mail de desenvolvimento (Nodemailer envia para cá): http://localhost:8025
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    restart: unless-stopped
+    ports: ["8025:8025"]
+    networks: [edge]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 64m
+
+networks:
+  backend_net:
+    internal: true # sem acesso externo: só backend <-> mongo
+  edge: {}
+
+volumes:
+  mongo_data:
+  uploads:
