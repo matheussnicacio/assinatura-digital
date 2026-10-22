@@ -14,15 +14,16 @@ export default function PendingExpenses() {
 
   useEffect(() => {
     if (!user) return;
-    const status = manager ? 'SUBMETIDA' : 'SUBMETIDA,VALIDADA';
-    api(`/expenses?status=${status}`).then(setItems).catch((e) => setError(e.message));
-  }, [user, manager]);
+    // Todos os perfis veem SUBMETIDA e VALIDADA: o gerente também pode ser dono de despesas a assinar.
+    api('/expenses?status=SUBMETIDA,VALIDADA').then(setItems).catch((e) => setError(e.message));
+  }, [user]);
 
   if (!user) return <Loading />;
 
   const action = (e) => {
-    if (manager && e.owner.id !== user.id) return { label: 'Validar', href: `/validateExpense?id=${e.id}` };
-    if (e.status === 'VALIDADA') return { label: 'Assinar', href: `/signExpense?id=${e.id}` };
+    const isOwner = e.owner.id === user.id;
+    if (manager && !isOwner && e.status === 'SUBMETIDA') return { label: 'Validar', href: `/validateExpense?id=${e.id}` };
+    if (isOwner && e.status === 'VALIDADA') return { label: 'Assinar', href: `/signExpense?id=${e.id}` };
     return { label: 'Ver detalhes', href: `/validateExpense?id=${e.id}` };
   };
 
